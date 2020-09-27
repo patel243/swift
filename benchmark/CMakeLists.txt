@@ -91,6 +91,7 @@ set(SWIFT_BENCH_MODULES
     single-source/Fibonacci
     single-source/FindStringNaive
     single-source/FlattenList
+    single-source/FloatingPointConversion
     single-source/FloatingPointParsing
     single-source/FloatingPointPrinting
     single-source/Hanoi
@@ -108,6 +109,7 @@ set(SWIFT_BENCH_MODULES
     single-source/LuhnAlgoLazy
     single-source/MapReduce
     single-source/Memset
+    single-source/Mirror
     single-source/MonteCarloE
     single-source/MonteCarloPi
     single-source/NSDictionaryCastToSwift
@@ -135,6 +137,7 @@ set(SWIFT_BENCH_MODULES
     single-source/PrefixWhile
     single-source/Prims
     single-source/PrimsNonStrongRef
+    single-source/ProtocolConformance
     single-source/ProtocolDispatch
     single-source/ProtocolDispatch2
     single-source/Queue

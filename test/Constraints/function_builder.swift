@@ -32,7 +32,6 @@ struct TupleBuilder {
     return (t1, t2, t3, t4, t5)
   }
 
-  static func buildDo<T>(_ value: T) -> T { return value }
   static func buildIf<T>(_ value: T?) -> T? { return value }
 
   static func buildEither<T,U>(first value: T) -> Either<T,U> {
@@ -45,8 +44,8 @@ struct TupleBuilder {
   static func buildArray<T>(_ array: [T]) -> [T] { return array }
 }
 
-func tuplify<T>(_ cond: Bool, @TupleBuilder body: (Bool) -> T) {
-  print(body(cond))
+func tuplify<T>(_ cond: Bool, @TupleBuilder body: (Bool) throws -> T) rethrows {
+  print(try body(cond))
 }
 
 // CHECK: (17, 3.14159, "Hello, DSL", (["nested", "do"], 6), Optional((2.71828, ["if", "stmt"])))
@@ -648,7 +647,6 @@ struct TupleBuilderWithOpt {
     return (t1, t2, t3, t4, t5)
   }
 
-  static func buildDo<T>(_ value: T) -> T { return value }
   static func buildOptional<T>(_ value: T?) -> T? { return value }
 
   static func buildEither<T,U>(first value: T) -> Either<T,U> {
@@ -687,5 +685,106 @@ tuplify(true) { c in
   }
 }
 
+// Test the use of function builders partly implemented through a protocol.
+indirect enum FunctionBuilder<Expression> {
+    case expression(Expression)
+    case block([FunctionBuilder])
+    case either(Either<FunctionBuilder, FunctionBuilder>)
+    case optional(FunctionBuilder?)
+}
+
+protocol FunctionBuilderProtocol {
+    associatedtype Expression
+    typealias Component = FunctionBuilder<Expression>
+    associatedtype Return
+
+    static func buildExpression(_ expression: Expression) -> Component
+    static func buildBlock(_ components: Component...) -> Component
+    static func buildOptional(_ optional: Component?) -> Component
+    static func buildArray(_ components: [Component]) -> Component
+    static func buildLimitedAvailability(_ component: Component) -> Component
+
+    static func buildFinalResult(_ components: Component) -> Return
+}
+
+extension FunctionBuilderProtocol {
+    static func buildExpression(_ expression: Expression) -> Component { .expression(expression) }
+    static func buildBlock(_ components: Component...) -> Component { .block(components) }
+    static func buildOptional(_ optional: Component?) -> Component { .optional(optional) }
+    static func buildArray(_ components: [Component]) -> Component { .block(components) }
+    static func buildLimitedAvailability(_ component: Component) -> Component { component }
+}
+
+@_functionBuilder
+enum ArrayBuilder<E>: FunctionBuilderProtocol {
+    typealias Expression = E
+    typealias Component = FunctionBuilder<E>
+    typealias Return = [E]
+
+    static func buildFinalResult(_ components: Component) -> Return {
+        switch components {
+        case .expression(let e): return [e]
+        case .block(let children): return children.flatMap(buildFinalResult)
+        case .either(.first(let child)): return buildFinalResult(child)
+        case .either(.second(let child)): return buildFinalResult(child)
+        case .optional(let child?): return buildFinalResult(child)
+        case .optional(nil): return []
+        }
+    }
+}
 
 
+func buildArray(@ArrayBuilder<String> build: () -> [String]) -> [String] {
+    return build()
+}
+
+
+let a = buildArray {
+    "1"
+    "2"
+    if Bool.random() {
+        "maybe 3"
+    }
+}
+// CHECK: ["1", "2"
+print(a)
+
+// Throwing in function builders.
+enum MyError: Error {
+  case boom
+}
+
+// CHECK: testThrow
+do {
+  print("testThrow")
+  try tuplify(true) { c in
+    "ready to throw"
+    throw MyError.boom
+  }
+} catch MyError.boom {
+  // CHECK: caught it!
+  print("caught it!")
+} catch {
+  fatalError("Threw something else?")
+}
+
+// CHECK: testStoredProperties
+struct MyTupleStruct<T, U> {
+  @TupleBuilder let first: () -> T
+  @TupleBuilder let second: U
+}
+
+print("testStoredProperties")
+let ts1 = MyTupleStruct {
+  1
+  "hello"
+  if true {
+    "conditional"
+  }
+} second: {
+  3.14159
+  "blah"
+}
+
+// CHECK: MyTupleStruct<(Int, String, Optional<String>), (Double, String)>(first: (Function), second: (3.14159, "blah"))
+print(ts1)

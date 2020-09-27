@@ -410,7 +410,7 @@ if (Builtin.ID == BuiltinValueKind::id) { \
     auto error = args.claimNext();
     auto errorBuffer = IGF.getErrorResultSlot(
                SILType::getPrimitiveObjectType(IGF.IGM.Context.getErrorDecl()
-                                                  ->getDeclaredType()
+                                                  ->getDeclaredInterfaceType()
                                                   ->getCanonicalType()));
     IGF.Builder.CreateStore(error, errorBuffer);
     
@@ -545,15 +545,15 @@ if (Builtin.ID == BuiltinValueKind::id) { \
     bool isWeak = false, isVolatile = false, isSingleThread = false;
     if (NextPart != Parts.end() && *NextPart == "weak") {
       isWeak = true;
-      NextPart++;
+      ++NextPart;
     }
     if (NextPart != Parts.end() && *NextPart == "volatile") {
       isVolatile = true;
-      NextPart++;
+      ++NextPart;
     }
     if (NextPart != Parts.end() && *NextPart == "singlethread") {
       isSingleThread = true;
-      NextPart++;
+      ++NextPart;
     }
     assert(NextPart == Parts.end() && "Mismatch with sema");
 

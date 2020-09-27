@@ -17,7 +17,6 @@
 #include "swift/Basic/SourceLoc.h"
 #include "clang/Basic/FileManager.h"
 #include "llvm/ADT/Optional.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/Support/SourceMgr.h"
 #include <map>
 
@@ -38,6 +37,20 @@ class SourceManager {
   /// This is as much a hack to prolong the lifetime of status objects as it is
   /// to speed up stats.
   mutable llvm::DenseMap<StringRef, llvm::vfs::Status> StatusCache;
+
+  struct ReplacedRangeType {
+    SourceRange Original;
+    SourceRange New;
+    ReplacedRangeType() {}
+    ReplacedRangeType(NoneType) {}
+    ReplacedRangeType(SourceRange Original, SourceRange New)
+        : Original(Original), New(New) {
+      assert(Original.isValid() && New.isValid());
+    }
+
+    explicit operator bool() const { return Original.isValid(); }
+  };
+  ReplacedRangeType ReplacedRange;
 
   // \c #sourceLocation directive handling.
   struct VirtualFile {
@@ -89,6 +102,9 @@ public:
   }
 
   SourceLoc getCodeCompletionLoc() const;
+
+  const ReplacedRangeType &getReplacedRange() const { return ReplacedRange; }
+  void setReplacedRange(const ReplacedRangeType &val) { ReplacedRange = val; }
 
   /// Returns true if \c LHS is before \c RHS in the source buffer.
   bool isBeforeInBuffer(SourceLoc LHS, SourceLoc RHS) const {
@@ -153,7 +169,7 @@ public:
 
   /// Returns a buffer ID for a previously added buffer with the given
   /// buffer identifier, or None if there is no such buffer.
-  Optional<unsigned> getIDForBufferIdentifier(StringRef BufIdentifier);
+  Optional<unsigned> getIDForBufferIdentifier(StringRef BufIdentifier) const;
 
   /// Returns the identifier for the buffer with the given ID.
   ///

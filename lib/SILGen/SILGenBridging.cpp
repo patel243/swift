@@ -347,11 +347,11 @@ getParameterTypes(AnyFunctionType::CanParamArrayRef params) {
   return results;
 }
 
-static CanAnyFunctionType getBridgedBlockType(SILGenModule &SGM,
-                                              CanAnyFunctionType blockType) {
-  return SGM.Types.getBridgedFunctionType(AbstractionPattern(blockType),
-                                         blockType, blockType->getExtInfo(),
-                                         Bridgeability::Full);
+static CanAnyFunctionType
+getBridgedBlockType(SILGenModule &SGM, CanAnyFunctionType blockType,
+                    SILFunctionTypeRepresentation silRep) {
+  return SGM.Types.getBridgedFunctionType(
+      AbstractionPattern(blockType), blockType, Bridgeability::Full, silRep);
 }
 
 static void buildFuncToBlockInvokeBody(SILGenFunction &SGF,
@@ -368,7 +368,8 @@ static void buildFuncToBlockInvokeBody(SILGenFunction &SGF,
   SILFunctionConventions funcConv(funcTy, SGF.SGM.M);
 
   // Make sure we lower the component types of the formal block type.
-  formalBlockType = getBridgedBlockType(SGF.SGM, formalBlockType);
+  formalBlockType = getBridgedBlockType(SGF.SGM, formalBlockType,
+                                        blockTy->getRepresentation());
 
   // Set up the indirect result.
   SILType blockResultTy =
@@ -552,9 +553,16 @@ ManagedValue SILGenFunction::emitFuncToBlock(SILLocation loc,
             blockInterfaceTy->getParameters().end(),
             std::back_inserter(params));
 
-  auto extInfo =
-      SILFunctionType::ExtInfo()
-        .withRepresentation(SILFunctionType::Representation::CFunctionPointer);
+  auto results = blockInterfaceTy->getResults();
+  auto representation = SILFunctionType::Representation::CFunctionPointer;
+  auto *clangFnType = getASTContext().getCanonicalClangFunctionType(
+      params, results.empty() ? Optional<SILResultInfo>() : results[0],
+      representation);
+
+  auto extInfo = SILFunctionType::ExtInfoBuilder()
+                     .withRepresentation(representation)
+                     .withClangFunctionType(clangFnType)
+                     .build();
 
   CanGenericSignature genericSig;
   GenericEnvironment *genericEnv = nullptr;
@@ -574,7 +582,7 @@ ManagedValue SILGenFunction::emitFuncToBlock(SILLocation loc,
     // context. Currently we don't capture anything directly into a block but a
     // Swift closure, but that's totally dumb.
     if (genericSig)
-      extInfo = extInfo.withIsPseudogeneric();
+      extInfo = extInfo.intoBuilder().withIsPseudogeneric().build();
   }
 
   auto invokeTy = SILFunctionType::get(
@@ -822,7 +830,8 @@ static void buildBlockToFuncThunkBody(SILGenFunction &SGF,
   Scope scope(SGF.Cleanups, CleanupLocation::get(loc));
 
   // Make sure we lower the component types of the formal block type.
-  formalBlockTy = getBridgedBlockType(SGF.SGM, formalBlockTy);
+  formalBlockTy =
+      getBridgedBlockType(SGF.SGM, formalBlockTy, blockTy->getRepresentation());
 
   assert(blockTy->getNumParameters() == funcTy->getNumParameters()
          && "block and function types don't match");
@@ -1469,7 +1478,7 @@ void SILGenFunction::emitNativeToForeignThunk(SILDeclRef thunk) {
       // If @objc was inferred based on the Swift 3 @objc inference rules, emit
       // a call to Builtin.swift3ImplicitObjCEntrypoint() to enable runtime
       // logging of the uses of such entrypoints.
-      if (attr->isSwift3Inferred() && !decl->isObjCDynamic()) {
+      if (attr->isSwift3Inferred() && !decl->shouldUseObjCDispatch()) {
         // Get the starting source location of the declaration so we can say
         // exactly where to stick '@objc'.
         SourceLoc objcInsertionLoc =
@@ -1709,7 +1718,7 @@ void SILGenFunction::emitForeignToNativeThunk(SILDeclRef thunk) {
       if (foreignError &&
           foreignArgIndex == foreignError->getErrorParameterIndex()) {
         args.push_back(ManagedValue());
-        foreignArgIndex++;
+        ++foreignArgIndex;
       }
     };
 
@@ -1759,7 +1768,7 @@ void SILGenFunction::emitForeignToNativeThunk(SILDeclRef thunk) {
           // Leave space for `self` to be filled in later.
           if (foreignArgIndex == memberStatus.getSelfIndex()) {
             args.push_back({});
-            foreignArgIndex++;
+            ++foreignArgIndex;
           }
           
           // Use the `self` space we skipped earlier if it's time.

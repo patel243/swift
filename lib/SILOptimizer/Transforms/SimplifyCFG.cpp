@@ -1053,7 +1053,7 @@ static bool onlyHasTerminatorAndDebugInsts(SILBasicBlock *BB) {
   while (&*Iter != Terminator) {
     if (!(&*Iter)->isDebugInstruction())
       return false;
-    Iter++;
+    ++Iter;
   }
   return true;
 }
@@ -2664,7 +2664,7 @@ bool SimplifyCFG::canonicalizeSwitchEnums() {
     
     // Construct a new instruction by copying all the case entries.
     SmallVector<std::pair<EnumElementDecl*, SILBasicBlock*>, 4> CaseBBs;
-    for (int idx = 0, numIdcs = SWI->getNumCases(); idx < numIdcs; idx++) {
+    for (int idx = 0, numIdcs = SWI->getNumCases(); idx < numIdcs; ++idx) {
       CaseBBs.push_back(SWI->getCase(idx));
     }
     // Add the default-entry of the original instruction as case-entry.
@@ -3144,7 +3144,7 @@ static SILValue getInsertedValue(SILInstruction *Aggregate,
   }
   auto *Tuple = cast<TupleInst>(Aggregate);
   auto *TEI = cast<TupleExtractInst>(Extract);
-  return Tuple->getElement(TEI->getFieldNo());
+  return Tuple->getElement(TEI->getFieldIndex());
 }
 
 /// Find a parent SwitchEnumInst of the block \p BB. The block \p BB is a
@@ -3346,7 +3346,7 @@ static bool simplifySwitchEnumToSelectEnum(SILBasicBlock *BB, unsigned ArgNum,
     unsigned ElemCount = 0;
     for (auto E : Enum->getAllElements()) {
       if (E)
-        ElemCount++;
+        ++ElemCount;
     }
 
     // Check if all possible cases are covered.

@@ -21,7 +21,6 @@
 
 #include "swift/AST/ClangNode.h"
 #include "swift/AST/TypeAlignments.h"
-#include "swift/SIL/SILLinkage.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
@@ -47,6 +46,7 @@ namespace swift {
   enum class SubclassScope : unsigned char;
   class SILModule;
   class SILLocation;
+  enum class SILLinkage : uint8_t;
   class AnyFunctionRef;
 
 /// How a method is dispatched.
@@ -277,10 +277,10 @@ struct SILDeclRef {
   SILLinkage getLinkage(ForDefinition_t forDefinition) const;
 
   /// Return the hash code for the SIL declaration.
-  llvm::hash_code getHashCode() const {
-    return llvm::hash_combine(loc.getOpaqueValue(),
-                              static_cast<int>(kind),
-                              isForeign, defaultArgIndex);
+  friend llvm::hash_code hash_value(const SILDeclRef &ref) {
+    return llvm::hash_combine(ref.loc.getOpaqueValue(),
+                              static_cast<int>(ref.kind),
+                              ref.isForeign, ref.defaultArgIndex);
   }
 
   bool operator==(SILDeclRef rhs) const {
@@ -309,7 +309,7 @@ struct SILDeclRef {
   /// function.
   SILDeclRef asAutoDiffDerivativeFunction(
       AutoDiffDerivativeFunctionIdentifier *derivativeId) const {
-    assert(!derivativeFunctionIdentifier);
+    assert(derivativeId);
     SILDeclRef declRef = *this;
     declRef.derivativeFunctionIdentifier = derivativeId;
     return declRef;
@@ -397,6 +397,16 @@ struct SILDeclRef {
 
   bool canBeDynamicReplacement() const;
 
+  bool isAutoDiffDerivativeFunction() const {
+    return derivativeFunctionIdentifier != nullptr;
+  }
+
+  AutoDiffDerivativeFunctionIdentifier *
+  getAutoDiffDerivativeFunctionIdentifier() const {
+    assert(isAutoDiffDerivativeFunction());
+    return derivativeFunctionIdentifier;
+  }
+
 private:
   friend struct llvm::DenseMapInfo<swift::SILDeclRef>;
   /// Produces a SILDeclRef from an opaque value.
@@ -411,22 +421,6 @@ private:
 inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS, SILDeclRef C) {
   C.print(OS);
   return OS;
-}
-
-// FIXME: This should not be necessary, but it looks like visibility rules for
-// extension members are slightly bogus, and so some protocol witness thunks
-// need to be public.
-//
-// We allow a 'public' member of an extension to witness a public
-// protocol requirement, even if the extended type is not public;
-// then SILGen gives the member private linkage, ignoring the more
-// visible access level it was given in the AST.
-inline bool
-fixmeWitnessHasLinkageThatNeedsToBePublic(SILDeclRef witness) {
-  auto witnessLinkage = witness.getLinkage(ForDefinition);
-  return !hasPublicVisibility(witnessLinkage)
-         && (!hasSharedVisibility(witnessLinkage)
-             || !witness.isSerialized());
 }
 
 } // end swift namespace

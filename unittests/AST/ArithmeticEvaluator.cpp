@@ -16,6 +16,7 @@
 #include "swift/AST/DiagnosticEngine.h"
 #include "swift/AST/Evaluator.h"
 #include "swift/AST/SimpleRequest.h"
+#include "swift/Basic/LangOptions.h"
 #include "swift/Basic/SourceManager.h"
 #include "gtest/gtest.h"
 #include <cmath>
@@ -218,10 +219,10 @@ TEST(ArithmeticEvaluator, Simple) {
 
   SourceManager sourceMgr;
   DiagnosticEngine diags(sourceMgr);
-  Evaluator evaluator(diags,
-                      /*debugDumpCycles=*/false,
-                      /*buildDependencyGraph=*/true,
-                      /*privateDependencies*/false);
+  LangOptions opts;
+  opts.DebugDumpCycles = false;
+  opts.BuildRequestDependencyGraph = true;
+  Evaluator evaluator(diags, opts);
   evaluator.registerRequestFunctions(Zone::ArithmeticEvaluator,
                                      arithmeticRequestFunctions);
 
@@ -344,10 +345,10 @@ TEST(ArithmeticEvaluator, Cycle) {
 
   SourceManager sourceMgr;
   DiagnosticEngine diags(sourceMgr);
-  Evaluator evaluator(diags,
-                      /*debugDumpCycles=*/false,
-                      /*buildDependencyGraph=*/false,
-                      /*privateDependencies*/false);
+  LangOptions opts;
+  opts.DebugDumpCycles = false;
+  opts.BuildRequestDependencyGraph = false;
+  Evaluator evaluator(diags, opts);
   evaluator.registerRequestFunctions(Zone::ArithmeticEvaluator,
                                      arithmeticRequestFunctions);
 

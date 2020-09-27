@@ -35,7 +35,6 @@
 #include "swift/SILOptimizer/Analysis/ValueTracking.h"
 #include "swift/SILOptimizer/Utils/InstOptUtils.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
@@ -237,7 +236,7 @@ public:
   }
 
   /// Returns whether the LSValue has been initialized properly.
-  bool isValid() const {
+  bool isValid() const override {
     if (CoveringValue)
       return true;
     return LSBase::isValid();
@@ -262,7 +261,7 @@ public:
     return Path.getValue().createExtract(Base, Inst, true);
   }
 
-  void print(llvm::raw_ostream &os) {
+  void print(llvm::raw_ostream &os) override {
     if (CoveringValue) {
       os << "Covering Value";
       return;

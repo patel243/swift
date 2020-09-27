@@ -10,8 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/SIL/SILInstruction.h"
 #define DEBUG_TYPE "ConstExpr"
 #include "swift/SILOptimizer/Utils/ConstExpr.h"
+#include "swift/AST/Builtins.h"
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/SemanticAttrs.h"
 #include "swift/AST/SubstitutionMap.h"
@@ -47,6 +49,8 @@ enum class WellKnownFunction {
   AllocateUninitializedArray,
   // Array._endMutation
   EndArrayMutation,
+  // _finalizeUninitializedArray
+  FinalizeUninitializedArray,
   // Array.append(_:)
   ArrayAppendElement,
   // String.init()
@@ -75,6 +79,8 @@ static llvm::Optional<WellKnownFunction> classifyFunction(SILFunction *fn) {
     return WellKnownFunction::AllocateUninitializedArray;
   if (fn->hasSemanticsAttr(semantics::ARRAY_END_MUTATION))
     return WellKnownFunction::EndArrayMutation;
+  if (fn->hasSemanticsAttr(semantics::ARRAY_FINALIZE_INTRINSIC))
+    return WellKnownFunction::FinalizeUninitializedArray;
   if (fn->hasSemanticsAttr(semantics::ARRAY_APPEND_ELEMENT))
     return WellKnownFunction::ArrayAppendElement;
   if (fn->hasSemanticsAttr(semantics::STRING_INIT_EMPTY))
@@ -294,7 +300,7 @@ SymbolicValue ConstExprFunctionState::computeConstantValue(SILValue value) {
     auto val = getConstantValue(tei->getOperand());
     if (!val.isConstant())
       return val;
-    return val.getAggregateMembers()[tei->getFieldNo()];
+    return val.getAggregateMembers()[tei->getFieldIndex()];
   }
 
   // If this is a struct extract from a fragile type, then we can return the
@@ -306,7 +312,7 @@ SymbolicValue ConstExprFunctionState::computeConstantValue(SILValue value) {
       return val;
     }
     assert(val.getKind() == SymbolicValue::Aggregate);
-    return val.getAggregateMembers()[sei->getFieldNo()];
+    return val.getAggregateMembers()[sei->getFieldIndex()];
   }
 
   // If this is an unchecked_enum_data from a fragile type, then we can return
@@ -373,9 +379,9 @@ SymbolicValue ConstExprFunctionState::computeConstantValue(SILValue value) {
     // Add our index onto the next of the list.
     unsigned index;
     if (auto sea = dyn_cast<StructElementAddrInst>(inst))
-      index = sea->getFieldNo();
+      index = sea->getFieldIndex();
     else
-      index = cast<TupleElementAddrInst>(inst)->getFieldNo();
+      index = cast<TupleElementAddrInst>(inst)->getFieldIndex();
     accessPath.push_back(index);
     return SymbolicValue::getAddress(memObject, accessPath,
                                      evaluator.getAllocator());
@@ -852,7 +858,7 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
   switch (callee) {
   case WellKnownFunction::AssertionFailure: {
     SmallString<4> message;
-    for (unsigned i = 0; i < apply->getNumArguments(); i++) {
+    for (unsigned i = 0, e = apply->getNumArguments(); i < e; ++i) {
       SILValue argument = apply->getArgument(i);
       SymbolicValue argValue = getConstantValue(argument);
       Optional<StringRef> stringOpt =
@@ -959,6 +965,21 @@ ConstExprFunctionState::computeWellKnownCallResult(ApplyInst *apply,
            "unexpected Array._endMutation() signature");
 
     // _endMutation is a no-op.
+    return None;
+  }
+  case WellKnownFunction::FinalizeUninitializedArray: {
+    // This function has the following signature in SIL:
+    //    (Array<Element>) -> Array<Element>
+    assert(conventions.getNumParameters() == 1 &&
+           conventions.getNumDirectSILResults() == 1 &&
+           conventions.getNumIndirectSILResults() == 0 &&
+           "unexpected _finalizeUninitializedArray() signature");
+
+    auto result = getConstantValue(apply->getOperand(1));
+    if (!result.isConstant())
+      return result;
+    // Semantically, it's an identity function.
+    setValue(apply, result);
     return None;
   }
   case WellKnownFunction::ArrayAppendElement: {
@@ -1737,8 +1758,8 @@ ConstExprFunctionState::evaluateFlowSensitive(SILInstruction *inst) {
       isa<ReleaseValueInst>(inst) || isa<StrongRetainInst>(inst) ||
       isa<StrongReleaseInst>(inst) || isa<DestroyValueInst>(inst) ||
       isa<EndBorrowInst>(inst) ||
-      // Skip sanitizer instrumentation
-      isSanitizerInstrumentation(inst))
+      // Skip instrumentation
+      isInstrumentation(inst))
     return None;
 
   // If this is a special flow-sensitive instruction like a stack allocation,

@@ -14,7 +14,6 @@
 #define SWIFT_FRONTEND_SUPPLEMENTARYOUTPUTPATHS_H
 
 #include "swift/Basic/LLVM.h"
-#include "llvm/ADT/Optional.h"
 
 #include <string>
 
@@ -165,6 +164,9 @@ struct SupplementaryOutputPaths {
   /// This is a walk-around that linker directives cannot specify other install
   /// name per symbol, we should eventually remove this.
   std::string LdAddCFilePath;
+
+  /// The path to which we should emit module summary file.
+  std::string ModuleSummaryOutputPath;
 
   SupplementaryOutputPaths() = default;
   SupplementaryOutputPaths(const SupplementaryOutputPaths &) = default;

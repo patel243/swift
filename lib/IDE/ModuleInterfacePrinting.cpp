@@ -374,8 +374,10 @@ static bool printModuleInterfaceDecl(Decl *D,
 
 /// Sorts import declarations for display.
 static bool compareImports(ImportDecl *LHS, ImportDecl *RHS) {
-  auto LHSPath = LHS->getFullAccessPath();
-  auto RHSPath = RHS->getFullAccessPath();
+  // TODO(SR-13490): Probably buggy--thinks "import Foo" == "import Foo.Bar".
+  // ImportPathBase should provide universal comparison functions to avoid this.
+  auto LHSPath = LHS->getImportPath();
+  auto RHSPath = RHS->getImportPath();
   for (unsigned i: range(std::min(LHSPath.size(), RHSPath.size()))) {
     if (int Ret = LHSPath[i].Item.str().compare(RHSPath[i].Item.str()))
       return Ret < 0;
@@ -595,7 +597,7 @@ void swift::ide::printModuleInterface(
   if (TargetClangMod) {
     // Assume all submodules are missing.
     for (auto It = TargetClangMod->submodule_begin();
-         It != TargetClangMod->submodule_end(); It++) {
+         It != TargetClangMod->submodule_end(); ++It) {
       NoImportSubModules.insert(*It);
     }
   }

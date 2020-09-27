@@ -22,11 +22,8 @@ set(swift_runtime_objc_sources
     ErrorObject.mm
     SwiftObject.mm
     SwiftValue.mm
-    ReflectionMirror.mm
-    ObjCRuntimeGetImageNameFromClass.mm
-    "${SWIFT_SOURCE_DIR}/lib/Demangling/OldRemangler.cpp"
-    "${SWIFT_SOURCE_DIR}/lib/Demangling/Remangler.cpp"
-    )
+    ReflectionMirrorObjC.mm
+    ObjCRuntimeGetImageNameFromClass.mm)
 
 set(swift_runtime_sources
     AnyHashableSupport.cpp
@@ -36,7 +33,9 @@ set(swift_runtime_sources
     CompatibilityOverride.cpp
     CygwinPort.cpp
     Demangle.cpp
+    DynamicCast.cpp
     Enum.cpp
+    EnvironmentVariables.cpp
     ErrorObjectCommon.cpp
     ErrorObjectConstants.cpp
     ErrorObjectNative.cpp
@@ -45,11 +44,14 @@ set(swift_runtime_sources
     Exclusivity.cpp
     ExistentialContainer.cpp
     Float16Support.cpp
+    FoundationSupport.cpp
     Heap.cpp
     HeapObject.cpp
+    ImageInspectionCommon.cpp
     ImageInspectionMachO.cpp
     ImageInspectionELF.cpp
     ImageInspectionCOFF.cpp
+    ImageInspectionStatic.cpp
     KeyPaths.cpp
     KnownMetadata.cpp
     Metadata.cpp
@@ -61,20 +63,9 @@ set(swift_runtime_sources
     Portability.cpp
     ProtocolConformance.cpp
     RefCount.cpp
+    ReflectionMirror.cpp
     RuntimeInvocationsTracking.cpp
-    SwiftDtoa.cpp
-    "${SWIFT_SOURCE_DIR}/lib/Demangling/OldDemangler.cpp"
-    "${SWIFT_SOURCE_DIR}/lib/Demangling/Demangler.cpp"
-    "${SWIFT_SOURCE_DIR}/lib/Demangling/NodePrinter.cpp"
-    "${SWIFT_SOURCE_DIR}/lib/Demangling/Context.cpp"
-    "${SWIFT_SOURCE_DIR}/lib/Demangling/ManglingUtils.cpp"
-    "${SWIFT_SOURCE_DIR}/lib/Demangling/Punycode.cpp")
-
-# When we're building with assertions, include the demangle node dumper to aid
-# in debugging.
-if (LLVM_ENABLE_ASSERTIONS)
-  list(APPEND swift_runtime_sources "${SWIFT_SOURCE_DIR}/lib/Demangling/NodeDumper.cpp")
-endif(LLVM_ENABLE_ASSERTIONS)
+    SwiftDtoa.cpp)
 
 # Acknowledge that the following sources are known.
 set(LLVM_OPTIONAL_SOURCES
@@ -163,18 +154,13 @@ if(SWIFT_BUILD_STATIC_STDLIB AND "${sdk}" STREQUAL "LINUX")
     INSTALL_IN_COMPONENT never_install)
 endif()
 
-if(SWIFT_STDLIB_USE_NONATOMIC_RC)
-  set(_RUNTIME_NONATOMIC_FLAGS -DSWIFT_STDLIB_USE_NONATOMIC_RC)
-endif()
 add_swift_target_library(swiftRuntime OBJECT_LIBRARY
   ${swift_runtime_sources}
   ${swift_runtime_objc_sources}
   ${swift_runtime_leaks_sources}
   C_COMPILE_FLAGS
     ${swift_runtime_library_compile_flags}
-    ${_RUNTIME_NONATOMIC_FLAGS}
   LINK_FLAGS ${swift_runtime_linker_flags}
-  INCORPORATE_OBJECT_LIBRARIES swiftLLVMSupport
   SWIFT_COMPILE_FLAGS ${SWIFT_STANDARD_LIBRARY_SWIFT_FLAGS}
   INSTALL_IN_COMPONENT never_install)
 

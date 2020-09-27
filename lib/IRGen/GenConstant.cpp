@@ -85,7 +85,8 @@ llvm::Constant *irgen::emitConstantZero(IRGenModule &IGM, BuiltinInst *BI) {
 
   if (auto vector = BI->getType().getAs<BuiltinVectorType>()) {
     auto zero = helper(vector.getElementType());
-    return llvm::ConstantVector::getSplat(vector->getNumElements(), zero);
+    return llvm::ConstantVector::getSplat(
+        llvm::ElementCount(vector->getNumElements(), /*scalable*/ false), zero);
   }
 
   return helper(BI->getType().getASTType());
@@ -101,14 +102,6 @@ llvm::Constant *irgen::emitAddrOfConstantString(IRGenModule &IGM,
   case StringLiteralInst::Encoding::Bytes:
   case StringLiteralInst::Encoding::UTF8:
     return IGM.getAddrOfGlobalString(SLI->getValue());
-
-  case StringLiteralInst::Encoding::UTF16: {
-    // This is always a GEP of a GlobalVariable with a nul terminator.
-    auto addr = IGM.getAddrOfGlobalUTF16String(SLI->getValue());
-
-    // Cast to Builtin.RawPointer.
-    return llvm::ConstantExpr::getBitCast(addr, IGM.Int8PtrTy);
-  }
 
   case StringLiteralInst::Encoding::ObjCSelector:
     llvm_unreachable("cannot get the address of an Objective-C selector");
@@ -177,7 +170,7 @@ namespace {
 void insertPadding(SmallVectorImpl<llvm::Constant *> &Elements,
                    llvm::StructType *sTy) {
   // fill in any gaps, which are the explicit padding that swiftc inserts.
-  for (unsigned i = 0, e = Elements.size(); i != e; i++) {
+  for (unsigned i = 0, e = Elements.size(); i != e; ++i) {
     auto &elt = Elements[i];
     if (elt == nullptr) {
       auto *eltTy = sTy->getElementType(i);
@@ -199,7 +192,7 @@ llvm::Constant *emitConstantStructOrTuple(IRGenModule &IGM, InstTy inst,
 
   // run over the Swift initializers, putting them into the struct as
   // appropriate.
-  for (unsigned i = 0, e = inst->getElements().size(); i != e; i++) {
+  for (unsigned i = 0, e = inst->getElements().size(); i != e; ++i) {
     auto operand = inst->getOperand(i);
     Optional<unsigned> index = nextIndex(IGM, type, i);
     if (index.hasValue()) {
@@ -244,7 +237,7 @@ llvm::Constant *irgen::emitConstantObject(IRGenModule &IGM, ObjectInst *OI,
   assert(NumElems == ClassLayout->getElements().size());
 
   // Construct the object init value including tail allocated elements.
-  for (unsigned i = 0; i != NumElems; i++) {
+  for (unsigned i = 0; i != NumElems; ++i) {
     SILValue Val = OI->getAllElements()[i];
     const ElementLayout &EL = ClassLayout->getElements()[i];
     if (!EL.isEmpty()) {

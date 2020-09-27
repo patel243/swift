@@ -20,6 +20,7 @@
 #include "swift/AST/Decl.h"
 #include "swift/AST/DeclContext.h"
 #include "swift/AST/Identifier.h"
+#include "swift/AST/Import.h"
 #include "swift/AST/LookupKinds.h"
 #include "swift/AST/RawComment.h"
 #include "swift/AST/Type.h"
@@ -28,15 +29,12 @@
 #include "swift/Basic/STLExtras.h"
 #include "swift/Basic/SourceLoc.h"
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MD5.h"
+#include <set>
 
 namespace clang {
   class Module;
@@ -205,17 +203,16 @@ class ModuleDecl : public DeclContext, public TypeDecl {
   friend class DirectPrecedenceGroupLookupRequest;
 
 public:
-  typedef ArrayRef<Located<Identifier>> AccessPathTy;
   /// Convenience struct to keep track of a module along with its access path.
-  struct ImportedModule {
+  struct alignas(uint64_t) ImportedModule {
     /// The access path from an import: `import Foo.Bar` -> `Foo.Bar`.
-    ModuleDecl::AccessPathTy accessPath;
+    ImportPath::Access accessPath;
     /// The actual module corresponding to the import.
     ///
     /// Invariant: The pointer is non-null.
     ModuleDecl *importedModule;
 
-    ImportedModule(ModuleDecl::AccessPathTy accessPath,
+    ImportedModule(ImportPath::Access accessPath,
                    ModuleDecl *importedModule)
         : accessPath(accessPath), importedModule(importedModule) {
       assert(this->importedModule);
@@ -227,13 +224,6 @@ public:
     }
   };
 
-  static bool matchesAccessPath(AccessPathTy AccessPath, DeclName Name) {
-    assert(AccessPath.size() <= 1 && "can only refer to top-level decls");
-  
-    return AccessPath.empty()
-      || DeclName(AccessPath.front().Item).matchesRef(Name);
-  }
-
   /// Arbitrarily orders ImportedModule records, for inclusion in sets and such.
   class OrderImportedModules {
   public:
@@ -242,8 +232,8 @@ public:
       if (lhs.importedModule != rhs.importedModule)
         return std::less<const ModuleDecl *>()(lhs.importedModule,
                                                rhs.importedModule);
-      if (lhs.accessPath.data() != rhs.accessPath.data())
-        return std::less<AccessPathTy::iterator>()(lhs.accessPath.begin(),
+      if (lhs.accessPath.getRaw().data() != rhs.accessPath.getRaw().data())
+        return std::less<ImportPath::Raw::iterator>()(lhs.accessPath.begin(),
                                                    rhs.accessPath.begin());
       return lhs.accessPath.size() < rhs.accessPath.size();
     }
@@ -370,29 +360,30 @@ public:
     return { Files.begin(), Files.size() };
   }
 
-  bool isClangModule() const;
   void addFile(FileUnit &newFile);
 
-  /// Creates a map from \c #filePath strings to corresponding \c #file
+  /// Creates a map from \c #filePath strings to corresponding \c #fileID
   /// strings, diagnosing any conflicts.
   ///
-  /// A given \c #filePath string always maps to exactly one \c #file string,
+  /// A given \c #filePath string always maps to exactly one \c #fileID string,
   /// but it is possible for \c #sourceLocation directives to introduce
   /// duplicates in the opposite direction. If there are such conflicts, this
   /// method will diagnose the conflict and choose a "winner" among the paths
-  /// in a reproducible way. The \c bool paired with the \c #file string is
+  /// in a reproducible way. The \c bool paired with the \c #fileID string is
   /// \c true for paths which did not have a conflict or won a conflict, and
   /// \c false for paths which lost a conflict. Thus, if you want to generate a
-  /// reverse mapping, you should drop or special-case the \c #file strings that
-  /// are paired with \c false.
-  ///
-  /// Note that this returns an empty StringMap if concise \c #file strings are
-  /// disabled. Users should fall back to using the file path in this case.
+  /// reverse mapping, you should drop or special-case the \c #fileID strings
+  /// that are paired with \c false.
   llvm::StringMap<std::pair<std::string, /*isWinner=*/bool>>
-  computeMagicFileStringMap(bool shouldDiagnose) const;
+  computeFileIDMap(bool shouldDiagnose) const;
 
   /// Add a file declaring a cross-import overlay.
   void addCrossImportOverlayFile(StringRef file);
+
+  /// Collect cross-import overlay names from a given YAML file path.
+  static llvm::SmallSetVector<Identifier, 4>
+  collectCrossImportOverlay(ASTContext &ctx, StringRef file,
+                            StringRef moduleName, StringRef& bystandingModule);
 
   /// If this method returns \c false, the module does not declare any
   /// cross-import overlays.
@@ -467,7 +458,7 @@ public:
 
   /// Convenience accessor for clients that know what kind of file they're
   /// dealing with.
-  SourceFile &getMainSourceFile(SourceFileKind expectedKind) const;
+  SourceFile &getMainSourceFile() const;
 
   /// Convenience accessor for clients that know what kind of file they're
   /// dealing with.
@@ -526,6 +517,12 @@ public:
     Bits.ModuleDecl.RawResilienceStrategy = unsigned(strategy);
   }
 
+  /// Returns true if this module was or is being compiled for testing.
+  bool hasIncrementalInfo() const { return Bits.ModuleDecl.HasIncrementalInfo; }
+  void setHasIncrementalInfo(bool enabled = true) {
+    Bits.ModuleDecl.HasIncrementalInfo = enabled;
+  }
+
   /// \returns true if this module is a system module; note that the StdLib is
   /// considered a system module.
   bool isSystemModule() const {
@@ -550,6 +547,10 @@ public:
   bool isMainModule() const {
     return Bits.ModuleDecl.IsMainModule;
   }
+
+  /// For the main module, retrieves the list of primary source files being
+  /// compiled, that is, the files we're generating code for.
+  ArrayRef<SourceFile *> getPrimarySourceFiles() const;
 
   /// Retrieve the top-level module. If this module is already top-level, this
   /// returns itself. If this is a submodule such as \c Foo.Bar.Baz, this
@@ -580,7 +581,7 @@ public:
   /// Find ValueDecls in the module and pass them to the given consumer object.
   ///
   /// This does a simple local lookup, not recursively looking through imports.
-  void lookupVisibleDecls(AccessPathTy AccessPath,
+  void lookupVisibleDecls(ImportPath::Access AccessPath,
                           VisibleDeclConsumer &Consumer,
                           NLKind LookupKind) const;
 
@@ -593,13 +594,13 @@ public:
   /// Finds all class members defined in this module.
   ///
   /// This does a simple local lookup, not recursively looking through imports.
-  void lookupClassMembers(AccessPathTy accessPath,
+  void lookupClassMembers(ImportPath::Access accessPath,
                           VisibleDeclConsumer &consumer) const;
 
   /// Finds class members defined in this module with the given name.
   ///
   /// This does a simple local lookup, not recursively looking through imports.
-  void lookupClassMember(AccessPathTy accessPath,
+  void lookupClassMember(ImportPath::Access accessPath,
                          DeclName name,
                          SmallVectorImpl<ValueDecl*> &results) const;
 
@@ -646,33 +647,59 @@ public:
 
   /// Find all SPI names imported from \p importedModule by this module,
   /// collecting the identifiers in \p spiGroups.
-  void lookupImportedSPIGroups(const ModuleDecl *importedModule,
-                          SmallVectorImpl<Identifier> &spiGroups) const;
+  void lookupImportedSPIGroups(
+                         const ModuleDecl *importedModule,
+                         llvm::SmallSetVector<Identifier, 4> &spiGroups) const;
 
   /// \sa getImportedModules
   enum class ImportFilterKind {
     /// Include imports declared with `@_exported`.
-    Public = 1 << 0,
+    Exported = 1 << 0,
     /// Include "regular" imports with no special annotation.
-    Private = 1 << 1,
+    Default = 1 << 1,
     /// Include imports declared with `@_implementationOnly`.
     ImplementationOnly = 1 << 2,
-    /// Include imports of SPIs declared with `@_spi`
+    /// Include imports of SPIs declared with `@_spi`. Non-SPI imports are
+    /// included whether or not this flag is specified.
     SPIAccessControl = 1 << 3,
-    /// Include imports shadowed by a separately-imported overlay (i.e. a
-    /// cross-import overlay). Unshadowed imports are included whether or not
-    /// this flag is specified.
-    ShadowedBySeparateOverlay = 1 << 4
+    /// Include imports shadowed by a cross-import overlay. Unshadowed imports
+    /// are included whether or not this flag is specified.
+    ShadowedByCrossImportOverlay = 1 << 4
   };
   /// \sa getImportedModules
   using ImportFilter = OptionSet<ImportFilterKind>;
 
   /// Looks up which modules are imported by this module.
   ///
-  /// \p filter controls whether public, private, or any imports are included
-  /// in this list.
+  /// \p filter controls which imports are included in the list.
+  ///
+  /// There are three axes for categorizing imports:
+  /// 1. Privacy: Exported/Private/ImplementationOnly (mutually exclusive).
+  /// 2. SPI/non-SPI: An import of any privacy level may be @_spi("SPIName").
+  /// 3. Shadowed/Non-shadowed: An import of any privacy level may be shadowed
+  ///    by a cross-import overlay.
+  ///
+  /// It is also possible for SPI imports to be shadowed by a cross-import
+  /// overlay.
+  ///
+  /// If \p filter contains multiple privacy levels, modules at all the privacy
+  /// levels are included.
+  ///
+  /// If \p filter contains \c ImportFilterKind::SPIAccessControl, then both
+  /// SPI and non-SPI imports are included. Otherwise, only non-SPI imports are
+  /// included.
+  ///
+  /// If \p filter contains \c ImportFilterKind::ShadowedByCrossImportOverlay,
+  /// both shadowed and non-shadowed imports are included. Otherwise, only
+  /// non-shadowed imports are included.
+  ///
+  /// Clang modules have some additional complexities; see the implementation of
+  /// \c ClangModuleUnit::getImportedModules for details.
+  ///
+  /// \pre \p filter must contain at least one privacy level, i.e. one of
+  ///      \c Exported or \c Private or \c ImplementationOnly.
   void getImportedModules(SmallVectorImpl<ImportedModule> &imports,
-                          ImportFilter filter = ImportFilterKind::Public) const;
+                          ImportFilter filter = ImportFilterKind::Exported) const;
 
   /// Looks up which modules are imported by this module, ignoring any that
   /// won't contain top-level decls.
@@ -681,6 +708,12 @@ public:
   /// May go away in the future.
   void
   getImportedModulesForLookup(SmallVectorImpl<ImportedModule> &imports) const;
+
+  /// Has \p module been imported via an '@_implementationOnly' import
+  /// instead of another kind of import?
+  ///
+  /// This assumes that \p module was imported.
+  bool isImportedImplementationOnly(const ModuleDecl *module) const;
 
   /// Uniques the items in \p imports, ignoring the source locations of the
   /// access paths.
@@ -742,12 +775,6 @@ public:
   /// Generate the list of libraries needed to link this module, based on its
   /// imports.
   void collectLinkLibraries(LinkLibraryCallback callback) const;
-
-  /// Returns true if the two access paths contain the same chain of
-  /// identifiers.
-  ///
-  /// Source locations are ignored here.
-  static bool isSameAccessPath(AccessPathTy lhs, AccessPathTy rhs);
 
   /// Get the path for the file that this module came from, or an empty
   /// string if this is not applicable.
@@ -880,7 +907,7 @@ namespace llvm {
     static bool isEqual(const ModuleDecl::ImportedModule &lhs,
                         const ModuleDecl::ImportedModule &rhs) {
       return lhs.importedModule == rhs.importedModule &&
-             ModuleDecl::isSameAccessPath(lhs.accessPath, rhs.accessPath);
+             lhs.accessPath.isSameAs(rhs.accessPath);
     }
   };
 }

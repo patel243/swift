@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 #include "swift/AST/Evaluator.h"
 #include "swift/AST/DiagnosticEngine.h"
+#include "swift/Basic/LangOptions.h"
 #include "swift/Basic/Range.h"
 #include "swift/Basic/SourceManager.h"
 #include "llvm/ADT/StringExtras.h"
@@ -61,22 +62,11 @@ void Evaluator::registerRequestFunctions(
   requestFunctionsByZone.push_back({zoneID, functions});
 }
 
-static evaluator::DependencyRecorder::Mode
-computeDependencyModeFromFlags(bool enableExperimentalPrivateDeps) {
-  using Mode = evaluator::DependencyRecorder::Mode;
-  if (enableExperimentalPrivateDeps) {
-    return Mode::ExperimentalPrivateDependencies;
-  }
-
-  return Mode::StatusQuo;
-}
-
-Evaluator::Evaluator(DiagnosticEngine &diags, bool debugDumpCycles,
-                     bool buildDependencyGraph,
-                     bool enableExperimentalPrivateDeps)
-    : diags(diags), debugDumpCycles(debugDumpCycles),
-      buildDependencyGraph(buildDependencyGraph),
-      recorder{computeDependencyModeFromFlags(enableExperimentalPrivateDeps)} {}
+Evaluator::Evaluator(DiagnosticEngine &diags, const LangOptions &opts)
+    : diags(diags),
+      debugDumpCycles(opts.DebugDumpCycles),
+      buildDependencyGraph(opts.BuildRequestDependencyGraph),
+      recorder{} {}
 
 void Evaluator::emitRequestEvaluatorGraphViz(llvm::StringRef graphVizPath) {
   std::error_code error;
@@ -381,9 +371,8 @@ void Evaluator::dumpDependenciesGraphviz() const {
 
 void evaluator::DependencyRecorder::realize(
     const DependencyCollector::Reference &ref) {
-  auto *source = getActiveDependencySourceOrNull();
-  assert(source && "cannot realize dependency without associated file!");
-  if (!source->hasInterfaceHash()) {
+  auto *source = getActiveDependencySourceOrNull().get();
+  if (!source->isPrimary()) {
     return;
   }
   fileReferences[source].insert(ref);
@@ -391,50 +380,32 @@ void evaluator::DependencyRecorder::realize(
 
 void evaluator::DependencyCollector::addUsedMember(NominalTypeDecl *subject,
                                                    DeclBaseName name) {
-  if (parent.mode ==
-      DependencyRecorder::Mode::ExperimentalPrivateDependencies) {
-    scratch.insert(
-        Reference::usedMember(subject, name, parent.isActiveSourceCascading()));
-  }
-  return parent.realize(
-      Reference::usedMember(subject, name, parent.isActiveSourceCascading()));
+  scratch.insert(Reference::usedMember(subject, name));
+  return parent.realize(Reference::usedMember(subject, name));
 }
 
 void evaluator::DependencyCollector::addPotentialMember(
     NominalTypeDecl *subject) {
-  if (parent.mode ==
-      DependencyRecorder::Mode::ExperimentalPrivateDependencies) {
-    scratch.insert(
-        Reference::potentialMember(subject, parent.isActiveSourceCascading()));
-  }
-  return parent.realize(
-      Reference::potentialMember(subject, parent.isActiveSourceCascading()));
+  scratch.insert(Reference::potentialMember(subject));
+  return parent.realize(Reference::potentialMember(subject));
 }
 
 void evaluator::DependencyCollector::addTopLevelName(DeclBaseName name) {
-  if (parent.mode ==
-      DependencyRecorder::Mode::ExperimentalPrivateDependencies) {
-    scratch.insert(Reference::topLevel(name, parent.isActiveSourceCascading()));
-  }
-  return parent.realize(
-      Reference::topLevel(name, parent.isActiveSourceCascading()));
+  scratch.insert(Reference::topLevel(name));
+  return parent.realize(Reference::topLevel(name));
 }
 
 void evaluator::DependencyCollector::addDynamicLookupName(DeclBaseName name) {
-  if (parent.mode ==
-      DependencyRecorder::Mode::ExperimentalPrivateDependencies) {
-    scratch.insert(Reference::dynamic(name, parent.isActiveSourceCascading()));
-  }
-  return parent.realize(
-      Reference::dynamic(name, parent.isActiveSourceCascading()));
+  scratch.insert(Reference::dynamic(name));
+  return parent.realize(Reference::dynamic(name));
 }
 
 void evaluator::DependencyRecorder::record(
     const llvm::SetVector<swift::ActiveRequest> &stack,
     llvm::function_ref<void(DependencyCollector &)> rec) {
   assert(!isRecording && "Probably not a good idea to allow nested recording");
-  auto *source = getActiveDependencySourceOrNull();
-  if (!source || !source->hasInterfaceHash()) {
+  auto source = getActiveDependencySourceOrNull();
+  if (source.isNull() || !source.get()->isPrimary()) {
     return;
   }
 
@@ -446,27 +417,16 @@ void evaluator::DependencyRecorder::record(
     return;
   }
 
-  assert(mode != Mode::StatusQuo);
-  for (const auto &request : stack) {
-    if (!request.isCached()) {
-      continue;
-    }
-
-    auto entry = requestReferences.find_as(request);
-    if (entry == requestReferences.end()) {
-      requestReferences.insert({AnyRequest(request), collector.scratch});
-      continue;
-    }
-
-    entry->second.insert(collector.scratch.begin(), collector.scratch.end());
-  }
+  return unionNearestCachedRequest(stack.getArrayRef(), collector.scratch);
 }
 
-void evaluator::DependencyRecorder::replay(const swift::ActiveRequest &req) {
+void evaluator::DependencyRecorder::replay(
+    const llvm::SetVector<swift::ActiveRequest> &stack,
+    const swift::ActiveRequest &req) {
   assert(!isRecording && "Probably not a good idea to allow nested recording");
 
-  auto *source = getActiveDependencySourceOrNull();
-  if (mode == Mode::StatusQuo || !source || !source->hasInterfaceHash()) {
+  auto source = getActiveDependencySourceOrNull();
+  if (source.isNull() || !source.get()->isPrimary()) {
     return;
   }
 
@@ -481,6 +441,50 @@ void evaluator::DependencyRecorder::replay(const swift::ActiveRequest &req) {
 
   for (const auto &ref : entry->second) {
     realize(ref);
+  }
+
+  // N.B. This is a particularly subtle detail of the replay unioning step. The
+  // evaluator does not push cached requests onto the active request stack,
+  // so it is possible (and, in fact, quite likely) we'll wind up with an
+  // empty request stack. The remaining troublesome case is when we have a
+  // cached request being run through the uncached path - take the
+  // InterfaceTypeRequest, which involves many component requests, most of which
+  // are themselves cached. In such a case, the active stack will look like
+  //
+  // -> TypeCheckSourceFileRequest
+  // -> ...
+  // -> InterfaceTypeRequest
+  // -> ...
+  // -> UnderlyingTypeRequest
+  //
+  // We want the UnderlyingTypeRequest to union its names into the
+  // InterfaceTypeRequest, and if we were to just start searching the active
+  // stack backwards for a cached request we would find...
+  // the UnderlyingTypeRequest! So, we'll just drop it from consideration.
+  //
+  // We do *not* have to consider this during the recording step because none
+  // of the name lookup requests (or any dependency sinks in general) are
+  // cached. Should this change in the future, we will need to sink this logic
+  // into the union step itself.
+  const size_t d = (!stack.empty() && req == stack.back()) ? 1 : 0;
+  return unionNearestCachedRequest(stack.getArrayRef().drop_back(d),
+                                   entry->second);
+}
+
+void evaluator::DependencyRecorder::unionNearestCachedRequest(
+    ArrayRef<swift::ActiveRequest> stack,
+    const DependencyCollector::ReferenceSet &scratch) {
+  auto nearest = std::find_if(stack.rbegin(), stack.rend(),
+                              [](const auto &req){ return req.isCached(); });
+  if (nearest == stack.rend()) {
+    return;
+  }
+
+  auto entry = requestReferences.find_as(*nearest);
+  if (entry == requestReferences.end()) {
+    requestReferences.insert({AnyRequest(*nearest), scratch});
+  } else {
+    entry->second.insert(scratch.begin(), scratch.end());
   }
 }
 

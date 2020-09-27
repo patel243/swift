@@ -40,7 +40,6 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/MapVector.h"
-#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/ilist.h"
@@ -111,7 +110,7 @@ class SILModule {
 public:
   using FunctionListType = llvm::ilist<SILFunction>;
   using GlobalListType = llvm::ilist<SILGlobalVariable>;
-  using VTableListType = llvm::ilist<SILVTable>;
+  using VTableListType = llvm::ArrayRef<SILVTable*>;
   using PropertyListType = llvm::ilist<SILProperty>;
   using WitnessTableListType = llvm::ilist<SILWitnessTable>;
   using DefaultWitnessTableListType = llvm::ilist<SILDefaultWitnessTable>;
@@ -172,14 +171,11 @@ private:
   /// but kept alive for debug info generation.
   FunctionListType zombieFunctions;
 
-  /// Stores the names of zombie functions.
-  llvm::BumpPtrAllocator zombieFunctionNames;
-
   /// Lookup table for SIL vtables from class decls.
   llvm::DenseMap<const ClassDecl *, SILVTable *> VTableMap;
 
   /// The list of SILVTables in the module.
-  VTableListType vtables;
+  std::vector<SILVTable*> vtables;
 
   /// This is a cache of vtable entries for quick look-up
   llvm::DenseMap<std::pair<const SILVTable *, SILDeclRef>, SILVTable::Entry>
@@ -341,7 +337,7 @@ public:
   /// Specialization can cause a function that was erased before by dead function
   /// elimination to become alive again. If this happens we need to remove it
   /// from the list of zombies.
-  void removeFromZombieList(StringRef Name);
+  SILFunction *removeFromZombieList(StringRef Name);
 
   /// Erase a global SIL variable from the module.
   void eraseGlobalVariable(SILGlobalVariable *G);
@@ -405,20 +401,15 @@ public:
   const_iterator zombies_begin() const { return zombieFunctions.begin(); }
   const_iterator zombies_end() const { return zombieFunctions.end(); }
 
+  llvm::ArrayRef<SILVTable*> getVTables() const {
+    return llvm::ArrayRef<SILVTable*>(vtables);
+  }
   using vtable_iterator = VTableListType::iterator;
   using vtable_const_iterator = VTableListType::const_iterator;
-  VTableListType &getVTableList() { return vtables; }
-  const VTableListType &getVTableList() const { return vtables; }
-  vtable_iterator vtable_begin() { return vtables.begin(); }
-  vtable_iterator vtable_end() { return vtables.end(); }
-  vtable_const_iterator vtable_begin() const { return vtables.begin(); }
-  vtable_const_iterator vtable_end() const { return vtables.end(); }
-  iterator_range<vtable_iterator> getVTables() {
-    return {vtables.begin(), vtables.end()};
-  }
-  iterator_range<vtable_const_iterator> getVTables() const {
-    return {vtables.begin(), vtables.end()};
-  }
+  vtable_iterator vtable_begin() { return getVTables().begin(); }
+  vtable_iterator vtable_end() { return getVTables().end(); }
+  vtable_const_iterator vtable_begin() const { return getVTables().begin(); }
+  vtable_const_iterator vtable_end() const { return getVTables().end(); }
 
   using witness_table_iterator = WitnessTableListType::iterator;
   using witness_table_const_iterator = WitnessTableListType::const_iterator;
@@ -567,10 +558,6 @@ public:
   /// i.e. it can be linked by linkFunction.
   bool hasFunction(StringRef Name);
 
-  /// Link all definitions in all segments that are logically part of
-  /// the same AST module.
-  void linkAllFromCurrentModule();
-
   /// Look up the SILWitnessTable representing the lowering of a protocol
   /// conformance, and collect the substitutions to apply to the referenced
   /// witnesses, if any.
@@ -601,7 +588,7 @@ public:
                                       bool deserializeLazily=true);
 
   /// Look up the VTable mapped to the given ClassDecl. Returns null on failure.
-  SILVTable *lookUpVTable(const ClassDecl *C);
+  SILVTable *lookUpVTable(const ClassDecl *C, bool deserializeLazily = true);
 
   /// Attempt to lookup the function corresponding to \p Member in the class
   /// hierarchy of \p Class.
@@ -663,6 +650,19 @@ public:
   /// invariants.
   void verify() const;
 
+  /// Check if there are any leaking instructions.
+  ///
+  /// Aborts with an error if more instructions are allocated than contained in
+  /// the module.
+  void checkForLeaks() const;
+
+  /// Check if there are any leaking instructions after the SILModule is
+  /// destructed.
+  ///
+  /// The SILModule destructor already calls checkForLeaks(). This function is
+  /// useful to check if the destructor itself destroys all data structures.
+  static void checkForLeaksAfterDestruction();
+
   /// Pretty-print the module.
   void dump(bool Verbose = false) const;
 
@@ -681,8 +681,7 @@ public:
   /// \param Opts The SIL options, used to determine printing verbosity and
   ///        and sorting.
   /// \param PrintASTDecls If set to true print AST decls.
-  void print(raw_ostream& OS,
-             ModuleDecl *M = nullptr,
+  void print(raw_ostream &OS, ModuleDecl *M = nullptr,
              const SILOptions &Opts = SILOptions(),
              bool PrintASTDecls = true) const {
     SILPrintContext PrintCtx(OS, Opts);

@@ -839,7 +839,7 @@ private:
     if (demangleNatural(natural)) {
       if (!Mangled.nextIf('_'))
         return false;
-      natural++;
+      ++natural;
       return true;
     }
     return false;
@@ -1765,10 +1765,10 @@ private:
   }
   
   NodePointer demangleFunctionType(Node::Kind kind) {
-    bool throws = false;
-    if (Mangled &&
-        Mangled.nextIf('z')) {
-      throws = true;
+    bool throws = false, async = false;
+    if (Mangled) {
+      throws = Mangled.nextIf('z');
+      async = Mangled.nextIf('Z');
     }
     NodePointer in_args = demangleType();
     if (!in_args)
@@ -1781,7 +1781,10 @@ private:
     if (throws) {
       block->addChild(Factory.createNode(Node::Kind::ThrowsAnnotation), Factory);
     }
-    
+    if (async) {
+      block->addChild(Factory.createNode(Node::Kind::AsyncAnnotation), Factory);
+    }
+
     NodePointer in_node = Factory.createNode(Node::Kind::ArgumentTuple);
     block->addChild(in_node, Factory);
     in_node->addChild(in_args, Factory);
@@ -2010,6 +2013,10 @@ private:
       }
     }
     if (c == 'Q') {
+      if (Mangled.nextIf('u')) {
+        // Special mangling for opaque return type.
+        return Factory.createNode(Node::Kind::OpaqueReturnType);
+      }
       return demangleArchetypeType();
     }
     if (c == 'q') {
@@ -2140,6 +2147,9 @@ private:
       else
         return nullptr;
     }
+
+    if (Mangled.nextIf('H'))
+      addImplFunctionAttribute(type, "@async");
 
     // Enter a new generic context if this type is generic.
     // FIXME: replace with std::optional, when we have it.

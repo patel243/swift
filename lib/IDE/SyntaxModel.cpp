@@ -905,7 +905,7 @@ bool ModelASTWalker::walkToDeclPre(Decl *D) {
                         AFD->getSignatureSourceRange());
     if (FD) {
       SN.TypeRange = charSourceRangeFromSourceRange(SM,
-                                    FD->getBodyResultTypeLoc().getSourceRange());
+                                    FD->getResultTypeSourceRange());
     }
     pushStructureNode(SN, AFD);
   } else if (auto *NTD = dyn_cast<NominalTypeDecl>(D)) {
@@ -990,7 +990,9 @@ bool ModelASTWalker::walkToDeclPre(Decl *D) {
     if (bracesRange.isValid())
       SN.BodyRange = innerCharSourceRangeFromSourceRange(SM, bracesRange);
     SourceLoc NRStart = VD->getNameLoc();
-    SourceLoc NREnd = NRStart.getAdvancedLoc(VD->getName().getLength());
+    SourceLoc NREnd = (!VD->getName().empty()
+                       ? NRStart.getAdvancedLoc(VD->getName().getLength())
+                       : NRStart);
     SN.NameRange = CharSourceRange(SM, NRStart, NREnd);
     SN.TypeRange = charSourceRangeFromSourceRange(SM,
                                         VD->getTypeSourceRangeForDiagnostics());
@@ -1096,7 +1098,7 @@ bool ModelASTWalker::walkToDeclPre(Decl *D) {
     SN.NameRange = charSourceRangeFromSourceRange(SM,
                                         SubscriptD->getSignatureSourceRange());
     SN.TypeRange = charSourceRangeFromSourceRange(SM,
-                            SubscriptD->getElementTypeLoc().getSourceRange());
+                            SubscriptD->getElementTypeSourceRange());
     pushStructureNode(SN, SubscriptD);
   } else if (auto *AssociatedTypeD = dyn_cast<AssociatedTypeDecl>(D)) {
     SyntaxStructureNode SN;
@@ -1199,7 +1201,7 @@ bool ModelASTWalker::handleSpecialDeclAttribute(const DeclAttribute *D,
                              ExcludeNodeAtLocation).shouldContinue)
       return false;
     if (auto *CA = dyn_cast<CustomAttr>(D)) {
-      if (auto *Repr = CA->getTypeLoc().getTypeRepr()) {
+      if (auto *Repr = CA->getTypeRepr()) {
         if (!Repr->walk(*this))
           return false;
       }
@@ -1416,7 +1418,7 @@ bool ModelASTWalker::pushStructureNode(const SyntaxStructureNode &Node,
                                        const ASTNodeType& ASTNode) {
   SubStructureStack.emplace_back(Node, ASTNode);
   if (shouldTreatAsSingleToken(Node, SM))
-    AvoidPassingSyntaxToken ++;
+    ++AvoidPassingSyntaxToken;
 
   if (!passTokenNodesUntil(Node.Range.getStart(),
                            ExcludeNodeAtLocation).shouldContinue)
@@ -1552,12 +1554,12 @@ static CharSourceRange sanitizeUnpairedParenthesis(CharSourceRange Range) {
   unsigned TrimLen = 0;
   for (char C : Text) {
     if (C == '(') {
-      Pairs ++;
+      ++Pairs;
     } else if (C == ')') {
       if (Pairs == 0)
-        TrimLen ++;
+        ++TrimLen;
       else
-        Pairs --;
+        --Pairs;
     } else {
       TrimLen = 0;
     }

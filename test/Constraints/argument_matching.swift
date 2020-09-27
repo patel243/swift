@@ -305,6 +305,93 @@ variadics6(x: 1, 2, 3) // expected-error{{missing argument for parameter 'z' in 
 variadics6(x: 1) // expected-error{{missing argument for parameter 'z' in call}}
 variadics6() // expected-error{{missing argument for parameter 'z' in call}}
 
+func variadics7(_ x: Int..., y: Int...) { }
+
+// Using multiple variadics (in order, complete)
+variadics7(1, y: 2)
+variadics7(1, 2, 3, y: 4, 5, 6)
+variadics7(1, 2, y: 2)
+variadics7(1, y: 2, 1)
+
+// multiple variadics, in order, some missing
+variadics7(y: 1)
+variadics7(1)
+variadics7(y: 4, 5, 6)
+variadics7(1, 2, 3)
+
+func variadics8(x: Int..., y: Int...) { }
+
+// multiple variadics, out of order
+variadics8(y: 1, x: 2) // expected-error {{argument 'x' must precede argument 'y'}} {{12-12=x: 2, }} {{16-22=}}
+variadics8(y: 1, 2, 3, x: 4) // expected-error {{argument 'x' must precede argument 'y'}} {{12-12=x: 4, }} {{22-28=}}
+variadics8(y: 1, x: 2, 3, 4) // expected-error {{argument 'x' must precede argument 'y'}} {{12-12=x: 2, 3, 4, }} {{16-28=}}
+variadics8(y: 1, 2, 3, x: 4, 5, 6) // expected-error {{argument 'x' must precede argument 'y'}} {{12-12=x: 4, 5, 6, }} {{22-34=}}
+
+func variadics9(_ a: Int..., b: Int, _ c: Int...) { } // expected-note {{'variadics9(_:b:_:)' declared here}}
+
+// multiple split variadics, in order, complete
+variadics9(1, b: 2, 3)
+variadics9(1, 2, 3, b: 2, 3)
+variadics9(1, b: 2, 3, 2, 1)
+variadics9(1, 2, 3, b: 2, 3, 2, 1)
+
+// multiple split variadics, in order, some missing
+variadics9(b: 2, 3)
+variadics9(1, b: 2)
+variadics9(1, 2, b: 2)
+variadics9(b: 2, 3, 2, 1)
+
+// multiple split variadics, required missing
+variadics9(1) // expected-error {{missing argument for parameter 'b' in call}}
+
+func variadics10(_ a: Int..., b: Int = 2, _ c: Int...) { }
+
+// multiple unlabeled variadics split by defaulted param, in order, complete
+variadics10(1, b: 2, 3)
+variadics10(1, 2, 3, b: 2, 3)
+variadics10(1, b: 2, 3, 2, 1)
+variadics10(1, 2, 3, b: 2, 3, 2, 1)
+
+// multiple unlabeled variadics split by defaulted param, in order, some missing
+variadics10(1, 2, 3)
+variadics10(1, 2, 3, b: 3)
+variadics10(b: 3)
+
+func variadics11(_ a: Int..., b: Bool = false, _ c: String...) { }
+
+variadics11(1, 2, 3, b: true, "hello", "world")
+variadics11(b: true, "hello", "world")
+variadics11(1, 2, 3, b: true)
+variadics11(b: true)
+variadics11()
+variadics11(1, 2, 3, "hello", "world") // expected-error 2 {{cannot convert value of type 'String' to expected argument type 'Int'}}
+
+func variadics12(a: Int..., b: Int, c: Int...) { }
+
+variadics12(a: 1, 2, 3, b: 4, c: 5, 6, 7)
+variadics12(b: 4, c: 5, 6, 7)
+variadics12(a: 1, 2, 3, b: 4)
+
+variadics12(c: 5, 6, 7, b: 4, a: 1, 2, 3) // expected-error {{incorrect argument labels in call (have 'c:_:_:b:a:_:_:', expected 'a:b:c:')}} {{13-14=a}} {{19-19=b: }} {{22-22=c: }} {{25-28=}} {{31-34=}}
+
+
+// Edge cases involving multiple trailing closures and forward matching.
+func variadics13(a: Int..., b: (()->Void)...) {}
+
+variadics13()
+variadics13(a: 1, 2, 3) {} _: {} _: {}
+variadics13() {} _: {} _: {}
+variadics13(a: 1, 2, 3)
+variadics13(a: 1, 2, 3) {}
+
+func variadics14(a: (()->Void)..., b: (()->Void)...) {} // expected-note {{'variadics14(a:b:)' declared here}}
+
+variadics14(a: {}, {}, b: {}, {})
+variadics14(a: {}, {}) {} _: {}
+variadics14 {} _: {} b: {} _: {}
+variadics14 {} b: {}
+variadics14 {} // expected-warning {{backward matching of the unlabeled trailing closure is deprecated; label the argument with 'b' to suppress this warning}}
+
 func outOfOrder(_ a : Int, b: Int) {
   outOfOrder(b: 42, 52)  // expected-error {{unnamed argument #2 must precede argument 'b'}} {{14-14=52, }} {{19-23=}}
 }
@@ -690,8 +777,120 @@ func testUnlabeledParameterBindingPosition() {
   do {
     func f(_ aa: Int) {}
 
+    f(1) // ok
+
+    f(xx: 1)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+
     f(0, 1)
     // expected-error@-1:10 {{extra argument in call}}
+
+    f(xx: 1, 2)
+    // expected-error@-1:14 {{extra argument in call}}
+
+    f(1, xx: 2)
+    // expected-error@-1:14 {{extra argument 'xx' in call}}
+
+    f(xx: 1, yy: 2)
+    // expected-error@-1:18 {{extra argument 'yy' in call}}
+  }
+
+  do {
+    func f(aa: Int) { }
+
+    f(1)
+    // expected-error@-1:7 {{missing argument label 'aa:' in call}}
+
+    f(aa: 1) // ok
+
+    f(xx: 1)
+    // expected-error@-1 {{incorrect argument label in call (have 'xx:', expected 'aa:')}}
+  }
+
+  do {
+    func f(_ aa: Int, _ bb: Int) { }
+    // expected-note@-1 3 {{'f' declared here}}
+
+    f(1)
+    // expected-error@-1:8 {{missing argument for parameter #2 in call}}
+
+    f(xx: 1)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+    // expected-error@-2:12 {{missing argument for parameter #2 in call}}
+
+    f(1, 2) // ok
+
+    f(1, xx: 2)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+
+    f(xx: 1, 2)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+
+    f(xx: 1, yy: 2)
+    // expected-error@-1 {{extraneous argument labels 'xx:yy:' in call}}
+
+    f(xx: 1, 2, 3)
+    // expected-error@-1:17 {{extra argument in call}}
+
+    f(1, xx: 2, 3)
+    // expected-error@-1:17 {{extra argument in call}}
+
+    f(1, 2, xx: 3)
+    // expected-error@-1:17 {{extra argument 'xx' in call}}
+
+    f(xx: 1, yy: 2, 3)
+    // expected-error@-1:21 {{extra argument in call}}
+
+    f(xx: 1, yy: 2, 3, 4)
+    // expected-error@-1:6 {{extra arguments at positions #3, #4 in call}}
+  }
+
+  do {
+    func f(_ aa: Int = 0, _ bb: Int) { }
+    // expected-note@-1 {{'f' declared here}}
+
+    f(1)
+    // expected-error@-1:8 {{missing argument for parameter #2 in call}}
+
+    f(1, 2) // ok
+  }
+
+  do {
+    func f(_ aa: Int, bb: Int) { }
+    // expected-note@-1 3 {{'f(_:bb:)' declared here}}
+
+    f(1)
+    // expected-error@-1:8 {{missing argument for parameter 'bb' in call}}
+
+    f(1, 2)
+    // expected-error@-1 {{missing argument label 'bb:' in call}}
+
+    f(1, bb: 2) // ok
+
+    f(xx: 1, 2)
+    // expected-error@-1 {{incorrect argument labels in call (have 'xx:_:', expected '_:bb:')}}
+
+    f(xx: 1, bb: 2)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+
+    f(bb: 1, 2, 3)
+    // expected-error@-1:17 {{extra argument in call}}
+
+    f(1, bb: 2, 3)
+    // expected-error@-1:17 {{extra argument in call}}
+
+    f(1, 2, bb: 3)
+    // expected-error@-1:10 {{extra argument in call}}
+
+    f(xx: 1, 2, 3)
+    // expected-error@-1:17 {{extra argument in call}}
+
+    f(1, xx: 2, 3)
+    // expected-error@-1:6 {{extra arguments at positions #2, #3 in call}}
+    // expected-error@-2:8 {{missing argument for parameter 'bb' in call}}
+
+    f(1, 2, xx: 3)
+    // expected-error@-1:17 {{extra argument 'xx' in call}}
   }
 
   do {
@@ -699,7 +898,7 @@ func testUnlabeledParameterBindingPosition() {
     func f(aa: Int, _ bb: Int) { }
 
     f(1)
-    // expected-error@-1 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
 
     f(0, 1)
     // expected-error@-1:6 {{missing argument label 'aa:' in call}}
@@ -719,15 +918,88 @@ func testUnlabeledParameterBindingPosition() {
     // expected-error@-1:17 {{extra argument 'xx' in call}}
 
     f(xx: 91, 1, 92)
-    // expected-error@-1 {{extra arguments at positions #2, #3 in call}}
-    // expected-error@-2 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-1:6 {{extra arguments at positions #2, #3 in call}}
+    // expected-error@-2:7 {{missing argument for parameter 'aa' in call}}
+
+    f(1, xx: 2, 3)
+    // expected-error@-1:6 {{extra arguments at positions #2, #3 in call}}
+    // expected-error@-2:7 {{missing argument for parameter 'aa' in call}}
+
+    f(1, 2, xx: 3)
+    // expected-error@-1:17 {{extra argument 'xx' in call}}
+  }
+
+  do {
+    func f(_ aa: Int, _ bb: Int = 82, _ cc: Int) { }
+    // expected-note@-1 {{'f' declared here}}
+
+    f(1, 2)
+    // expected-error@-1:11 {{missing argument for parameter #3 in call}}
+
+    f(1, 2, 3) // ok
+  }
+
+  do {
+    func f(_ aa: Int, _ bb: Int, cc: Int) { }
+
+    f(1, 2, cc: 3) // ok
+
+    f(1, 2, xx: 3)
+    // expected-error@-1 {{incorrect argument label in call (have '_:_:xx:', expected '_:_:cc:')}}
+
+    f(1, cc: 2, 3)
+    // expected-error@-1 {{unnamed argument #3 must precede argument 'cc'}}
+
+    f(1, xx: 2, 3)
+    // expected-error@-1 {{incorrect argument labels in call (have '_:xx:_:', expected '_:_:cc:')}}
+
+    f(cc: 1, 2, 3)
+    // expected-error@-1 {{incorrect argument labels in call (have 'cc:_:_:', expected '_:_:cc:')}}
+
+    f(xx: 1, 2, 3)
+    // expected-error@-1 {{incorrect argument labels in call (have 'xx:_:_:', expected '_:_:cc:')}}
+
+    f(xx: 1, yy: 2, 3)
+    // expected-error@-1 {{incorrect argument labels in call (have 'xx:yy:_:', expected '_:_:cc:')}}
+
+    f(xx: 1, 2, yy: 3)
+    // expected-error@-1 {{incorrect argument labels in call (have 'xx:_:yy:', expected '_:_:cc:')}}
+
+    f(1, xx: 2, yy: 3)
+    // expected-error@-1 {{incorrect argument labels in call (have '_:xx:yy:', expected '_:_:cc:')}}
   }
 
   do {
     func f(_ aa: Int, bb: Int, _ cc: Int) { }
+    // expected-note@-1 4 {{'f(_:bb:_:)' declared here}}
+
+    f(1)
+    // expected-error@-1:7 {{missing arguments for parameters 'bb', #3 in call}}
+
+    f(1, 2)
+    // expected-error@-1:8 {{missing argument for parameter 'bb' in call}}
+
+    f(1, 2, 3)
+    // expected-error@-1 {{missing argument label 'bb:' in call}}
+
+    f(1, 2, bb: 3)
+    // expected-error@-1 {{argument 'bb' must precede unnamed argument #2}}
+
+    f(1, bb: 2, 3) // ok
 
     f(bb: 1, 0, 2)
     // expected-error@-1 {{unnamed argument #3 must precede argument 'bb'}}
+
+    f(xx: 1, 2, 3)
+    // expected-error@-1 {{incorrect argument labels in call (have 'xx:_:_:', expected '_:bb:_:')}}
+
+    f(1, xx: 2, 3)
+    // expected-error@-1:17 {{extra argument in call}}
+    // expected-error@-2:8 {{missing argument for parameter 'bb' in call}}
+
+    f(1, 2, xx: 3)
+    // expected-error@-1:8 {{missing argument for parameter 'bb' in call}}
+    // expected-error@-2:17 {{extra argument 'xx' in call}}
   }
 
   do {
@@ -741,7 +1013,7 @@ func testUnlabeledParameterBindingPosition() {
     func f(_ aa: Int, bb: Int, _ cc: Int...) { }
 
     f(bb: 1, 2, 3, 4)
-    // expected-error@-1 {{missing argument for parameter #1 in call}}
+    // expected-error@-1:7 {{missing argument for parameter #1 in call}}
   }
 
   do {
@@ -754,8 +1026,51 @@ func testUnlabeledParameterBindingPosition() {
     // expected-note@+1 *{{'f(aa:_:_:)' declared here}}
     func f(aa: Int, _ bb: Int, _ cc: Int) {}
 
+    f(1)
+    // expected-error@-1:7 {{missing arguments for parameters 'aa', #3 in call}}
+
     f(0, 1)
     // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+
+    f(1, 2, 3)
+    // expected-error@-1:6 {{missing argument label 'aa:' in call}}
+
+    f(1, aa: 2, 3)
+    // expected-error@-1:10 {{argument 'aa' must precede unnamed argument #1}}
+
+    f(1, xx: 2, 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-2:17 {{extra argument in call}}
+
+    f(aa: 1, 2, 3) // ok
+
+    f(xx: 1, 2, 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-2:17 {{extra argument in call}}
+
+    f(xx: 1, 2, yy: 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-2:21 {{extra argument 'yy' in call}}
+
+    f(xx: 1, yy: 2, 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-2:21 {{extra argument in call}}
+
+    f(1, xx: 2, yy: 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-2:21 {{extra argument 'yy' in call}}
+
+    f(1, 2, 3, 4)
+    // expected-error@-1:16 {{extra argument in call}}
+
+    f(1, aa: 2, 3, 4)
+    // expected-error@-1:20 {{extra argument in call}}
+
+    f(1, aa: 2, 3, xx: 4)
+    // expected-error@-1:24 {{extra argument 'xx' in call}}
+
+    f(1, aa: 2, xx: 3, 4)
+    // expected-error@-1:24 {{extra argument in call}}
   }
 
   do {
@@ -776,6 +1091,34 @@ func testUnlabeledParameterBindingPosition() {
 
     f(0, bb: 1, 2)
     // expected-error@-1:6 {{missing argument label 'aa:' in call}}
+
+    f(xx: 1, 2, 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-2:17 {{extra argument in call}}
+
+    f(1, xx: 2, 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+    // expected-error@-2:17 {{extra argument in call}}
+
+    f(1, 2, xx: 3)
+    // expected-error@-1:8 {{missing argument for parameter 'bb' in call}}
+    // expected-error@-2:17 {{extra argument 'xx' in call}}
+  }
+
+  do {
+    func f(aa: Int, bb: Int, cc: Int) { }
+
+    f(1, aa: 2, bb: 3)
+    // expected-error@-1 {{incorrect argument labels in call (have '_:aa:bb:', expected 'aa:bb:cc:')}}
+
+    f(1, bb: 2, aa: 3)
+    // expected-error@-1 {{incorrect argument labels in call (have '_:bb:aa:', expected 'aa:bb:cc:')}}
+
+    f(aa: 1, 2, bb: 3)
+    // expected-error@-1 {{incorrect argument labels in call (have 'aa:_:bb:', expected 'aa:bb:cc:')}}
+
+    f(aa: 1, bb: 2, 3)
+    // expected-error@-1 {{missing argument label 'cc:' in call}}
   }
 
   do {
@@ -788,6 +1131,130 @@ func testUnlabeledParameterBindingPosition() {
     func f(_ aa: Int, _ bb: Int = 81, cc: Int = 82, _ dd: Int) {}
 
     f(0, cc: 2, 3) // ok
+
+    f(cc: 1, 2, 3, 4)
+    // expected-error@-1 {{unnamed argument #3 must precede argument 'cc'}}
+  }
+
+  do {
+    func f(_ aa: Int, _ bb: Int, cc: Int, dd: Int) { }
+    // expected-note@-1 6 {{'f(_:_:cc:dd:)' declared here}}
+
+    f(1, xx: 2)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+    // expected-error@-2:6 {{missing arguments for parameters 'cc', 'dd' in call}}
+
+    f(xx: 1, 2)
+    // expected-error@-1:6 {{missing arguments for parameters 'cc', 'dd' in call}}
+    // expected-error@-2 {{extraneous argument label 'xx:' in call}}
+
+    f(1, xx: 2, cc: 3)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+    // expected-error@-2:22 {{missing argument for parameter 'dd' in call}}
+
+    f(1, xx: 2, dd: 3)
+    // expected-error@-1 {{incorrect argument labels in call (have '_:xx:dd:', expected '_:_:cc:dd:')}}
+    // expected-error@-2:15 {{missing argument for parameter 'cc' in call}}
+
+    f(xx: 1, 2, cc: 3)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+    // expected-error@-2:22 {{missing argument for parameter 'dd' in call}}
+
+    f(xx: 1, 2, dd: 3)
+    // expected-error@-1 {{incorrect argument labels in call (have 'xx:_:dd:', expected '_:_:cc:dd:')}}
+    // expected-error@-2:15 {{missing argument for parameter 'cc' in call}}
+
+    f(1, xx: 2, cc: 3, dd: 4)
+    // expected-error@-1:6 {{extraneous argument label 'xx:' in call}}
+
+    f(xx: 1, 2, cc: 3, dd: 4)
+    // expected-error@-1:6 {{extraneous argument label 'xx:' in call}}
+  }
+
+  do {
+    func f(_ aa: Int, bb: Int = 82, _ cc: Int, _ dd: Int) { }
+
+    f(1, bb: 2, 3, 4) // ok
+
+    f(1, 2, bb: 3, 4)
+    // expected-error@-1 {{argument 'bb' must precede unnamed argument #2}}
+  }
+
+  do {
+    func f(aa: Int, _ bb: Int, cc: Int, _ dd: Int) { }
+    // expected-note@-1 3 {{'f(aa:_:cc:_:)' declared here}}
+
+    f(1)
+    // expected-error@-1:7 {{missing arguments for parameters 'aa', 'cc', #4 in call}}
+
+    f(1, 2)
+    // expected-error@-1:6 {{missing arguments for parameters 'aa', 'cc' in call}}
+
+    f(1, 2, 3)
+    // expected-error@-1 {{missing argument labels 'aa:cc:' in call}}
+    // expected-error@-2:11 {{missing argument for parameter 'cc' in call}}
+
+    f(1, 2, 3, 4)
+    // expected-error@-1:6 {{missing argument labels 'aa:cc:' in call}}
+
+    f(1, 2, 3, 4, 5)
+    // expected-error@-1:19 {{extra argument in call}}
+  }
+
+  do {
+    func f(aa: Int, bb: Int, _ cc: Int, _ dd: Int) { }
+    // expected-note@-1 6 {{'f(aa:bb:_:_:)' declared here}}
+
+    f(1, xx: 2)
+    // expected-error@-1:6 {{missing arguments for parameters 'aa', 'bb' in call}}
+    // expected-error@-2 {{incorrect argument labels in call (have '_:xx:', expected 'aa:bb:_:_:')}}
+
+    f(xx: 1, 2)
+    // expected-error@-1 {{incorrect argument labels in call (have 'xx:_:', expected 'aa:bb:_:_:')}}
+    // expected-error@-2:6 {{missing arguments for parameters 'aa', 'bb' in call}}
+
+    f(bb: 1, 2, xx: 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+
+    f(bb: 1, xx: 2, 3)
+    // expected-error@-1:7 {{missing argument for parameter 'aa' in call}}
+
+    f(aa: 1, 2, xx: 3)
+    // expected-error@-1:12 {{missing argument for parameter 'bb' in call}}
+
+    f(aa: 1, xx: 2, 3)
+    // expected-error@-1 {{incorrect argument label in call (have 'aa:xx:_:', expected 'aa:bb:_:_:')}}
+    // expected-error@-2:12 {{missing argument for parameter 'bb' in call}}
+
+    f(aa: 1, bb: 2, 3, xx: 4)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+
+    f(aa: 1, bb: 2, xx: 3, 4)
+    // expected-error@-1 {{extraneous argument label 'xx:' in call}}
+  }
+
+  do {
+    func f(_ aa: Int, bb: Int, _ cc: Int, dd: Int, _ ee: Int) { }
+
+    f(1, bb: 2, 3, 4, dd: 5)
+    // expected-error@-1:23 {{argument 'dd' must precede unnamed argument #4}}
+
+    f(1, dd: 2, 3, 4, bb: 5)
+    // expected-error@-1 {{incorrect argument labels in call (have '_:dd:_:_:bb:', expected '_:bb:_:dd:_:')}}
+
+    f(1, bb: 2, 3, dd: 4, 5) // ok
+
+    f(1, dd: 2, 3, bb: 4, 5)
+    // expected-error@-1 {{incorrect argument labels in call (have '_:dd:_:bb:_:', expected '_:bb:_:dd:_:')}}
+
+    f(1, 2, bb: 3, 4, dd: 5, 6)
+    // expected-error@-1:30 {{extra argument in call}}
+
+    f(1, bb: 2, 3, 4, dd: 5, 6)
+    // expected-error@-1:30 {{extra argument in call}}
+
+    f(1, dd: 2, 3, 4, bb: 5, 6)
+    // expected-error@-1:30 {{extra argument in call}}
   }
 }
 
@@ -956,6 +1423,26 @@ d = sub2[d] // expected-error{{missing argument label 'd:' in subscript}} {{10-1
 d = sub2[d: d]
 d = sub2[f: d] // expected-error{{incorrect argument label in subscript (have 'f:', expected 'd:')}} {{10-11=d}}
 
+struct Sub3 {
+  subscript (a: Int..., b b: Int...) -> Int { 42 }
+}
+
+let sub3 = Sub3()
+_ = sub3[1, 2, 3, b: 4, 5, 6]
+_ = sub3[b: 4, 5, 6]
+_ = sub3[1, 2, 3]
+_ = sub3[1, c: 4] // expected-error {{incorrect argument label in subscript (have '_:c:', expected '_:b:')}}
+
+struct Sub4 {
+  subscript (a: Int..., b b: Int = 0, c: Int...) -> Int { 42 }
+}
+
+let sub4 = Sub4()
+_ = sub4[1, 2, 3, b: 2, 1, 2, 3]
+_ = sub4[1, 2, 3, b: 2]
+_ = sub4[1, 2, 3]
+_ = sub4[]
+
 // -------------------------------------------
 // Closures
 // -------------------------------------------
@@ -1038,7 +1525,7 @@ struct RelabelAndTrailingClosure {
   func f2(aa: Int, bb: Int, _ cc: () -> Void = {}) {}
 
   func test() {
-    f1(aax: 1, bbx: 2) {} // expected-error {{incorrect argument labels in call (have 'aax:bbx:_:', expected 'aa:bb:cc:')}} {{8-11=aa}} {{16-19=bb}} {{none}}
+    f1(aax: 1, bbx: 2) {} // expected-error {{incorrect argument labels in call (have 'aax:bbx:_:', expected 'aa:bb:_:')}} {{8-11=aa}} {{16-19=bb}} {{none}}
     f2(aax: 1, bbx: 2) {} // expected-error {{incorrect argument labels in call (have 'aax:bbx:_:', expected 'aa:bb:_:')}} {{8-11=aa}} {{16-19=bb}} {{none}}
 
     f1(aax: 1, bbx: 2) // expected-error {{incorrect argument labels in call (have 'aax:bbx:', expected 'aa:bb:')}} {{8-11=aa}} {{16-19=bb}} {{none}}
@@ -1085,34 +1572,30 @@ _ = acceptTuple2(tuple1)
 _ = acceptTuple2((1, "hello", 3.14159))
 
 
-func generic_and_missing_label(x: Int) {}
-func generic_and_missing_label<T>(x: T) {}
+func generic_and_missing_label(x: Int) {} // expected-note {{incorrect labels for candidate (have: '(_:)', expected: '(x:)')}}
+func generic_and_missing_label<T>(x: T) {} // expected-note {{incorrect labels for candidate (have: '(_:)', expected: '(x:)')}}
 
 generic_and_missing_label(42)
-// expected-error@-1 {{missing argument label 'x:' in call}} {{27-27=x: }}
+// expected-error@-1 {{no exact matches in call to global function 'generic_and_missing_label'}}
 
 // -------------------------------------------
 // Curried functions
 // -------------------------------------------
-
 func f7(_ a: Int) -> (_ b: Int) -> Int {
   return { b in a+b }
 }
 
 _ = f7(1)(1)
 f7(1.0)(2)       // expected-error {{cannot convert value of type 'Double' to expected argument type 'Int'}}
-
 f7(1)(1.0)       // expected-error {{cannot convert value of type 'Double' to expected argument type 'Int'}}
 f7(1)(b: 1.0)    // expected-error{{extraneous argument label 'b:' in call}}
 // expected-error@-1 {{cannot convert value of type 'Double' to expected argument type 'Int'}}
-
 let f10 = f7(2)
 _ = f10(1)
 f10(10)          // expected-warning {{result of call to function returning 'Int' is unused}}
 f10(1.0)         // expected-error {{cannot convert value of type 'Double' to expected argument type 'Int'}}
 f10(b: 1.0)         // expected-error {{extraneous argument label 'b:' in call}}
 // expected-error@-1 {{cannot convert value of type 'Double' to expected argument type 'Int'}}
-
 
 class CurriedClass {
   func method1() {}
@@ -1133,13 +1616,11 @@ c.method2(1)(2.0) // expected-error {{cannot convert value of type 'Double' to e
 c.method2(1.0)(2) // expected-error {{cannot convert value of type 'Double' to expected argument type 'Int'}}
 c.method2(1.0)(2.0) // expected-error {{cannot convert value of type 'Double' to expected argument type 'Int'}}
 // expected-error@-1 {{cannot convert value of type 'Double' to expected argument type 'Int'}}
-
 CurriedClass.method1(c)()
 _ = CurriedClass.method1(c)
 CurriedClass.method1(c)(1)         // expected-error {{argument passed to call that takes no arguments}}
 CurriedClass.method1(2.0)(1)       // expected-error {{cannot convert value of type 'Double' to expected argument type 'CurriedClass'}}
 // expected-error@-1:27 {{argument passed to call that takes no arguments}}
-
 CurriedClass.method2(c)(32)(b: 1) // expected-error{{extraneous argument label 'b:' in call}}
 _ = CurriedClass.method2(c)
 _ = CurriedClass.method2(c)(32)
@@ -1150,7 +1631,6 @@ CurriedClass.method2(c)(1.0)(b: 1) // expected-error {{cannot convert value of t
 CurriedClass.method2(c)(1)(1.0) // expected-error {{cannot convert value of type 'Double' to expected argument type 'Int'}}
 CurriedClass.method2(c)(2)(c: 1.0) // expected-error {{extraneous argument label 'c:'}}
 // expected-error@-1 {{cannot convert value of type 'Double' to expected argument type 'Int'}}
-
 CurriedClass.method3(c)(32, b: 1)
 _ = CurriedClass.method3(c)
 _ = CurriedClass.method3(c)(1, 2)        // expected-error {{missing argument label 'b:' in call}} {{32-32=b: }}
@@ -1162,7 +1642,6 @@ CurriedClass.method3(c)(1)               // expected-error {{missing argument fo
 CurriedClass.method3(c)(c: 1.0)          // expected-error {{incorrect argument labels in call (have 'c:', expected '_:b:')}}
 // expected-error@-1 {{cannot convert value of type 'Double' to expected argument type 'Int'}}
 // expected-error@-2 {{missing argument for parameter #1 in call}}
-
 
 extension CurriedClass {
   func f() {
@@ -1177,64 +1656,51 @@ extension CurriedClass {
 
 extension CurriedClass {
   func m1(_ a : Int, b : Int) {}
-  
+
   func m2(_ a : Int) {}
 }
 
 // <rdar://problem/23718816> QoI: "Extra argument" error when accidentally currying a method
 CurriedClass.m1(2, b: 42)   // expected-error {{instance member 'm1' cannot be used on type 'CurriedClass'; did you mean to use a value of this type instead?}}
 
-
 // <rdar://problem/22108559> QoI: Confusing error message when calling an instance method as a class method
 CurriedClass.m2(12)  // expected-error {{instance member 'm2' cannot be used on type 'CurriedClass'; did you mean to use a value of this type instead?}}
-
 // -------------------------------------------
 // Multiple label errors
 // -------------------------------------------
-
 func testLabelErrorsBasic() {
   func f(_ aa: Int, _ bb: Int, cc: Int, dd: Int, ee: Int, ff: Int) {}
 
   // 1 wrong
   f(0, 1, ccx: 2, dd: 3, ee: 4, ff: 5)
   // expected-error@-1 {{incorrect argument label in call (have '_:_:ccx:dd:ee:ff:', expected '_:_:cc:dd:ee:ff:')}} {{11-14=cc}} {{none}}
-
   // 1 missing
   f(0, 1, 2, dd: 3, ee: 4, ff: 5)
   // expected-error@-1 {{missing argument label 'cc:' in call}} {{11-11=cc: }} {{none}}
-
   // 1 extra
   f(aa: 0, 1, cc: 2, dd: 3, ee: 4, ff: 5)
   // expected-error@-1 {{extraneous argument label 'aa:' in call}} {{5-9=}} {{none}}
-
   // 1 ooo
   f(0, 1, dd: 3, cc: 2, ee: 4, ff: 5)
   // expected-error@-1 {{argument 'cc' must precede argument 'dd'}} {{16-23=}} {{11-11=cc: 2, }} {{none}}
-
   // 2 wrong
   f(0, 1, ccx: 2, ddx: 3, ee: 4, ff: 5)
   // expected-error@-1 {{incorrect argument labels in call (have '_:_:ccx:ddx:ee:ff:', expected '_:_:cc:dd:ee:ff:')}} {{11-14=cc}} {{19-22=dd}} {{none}}
-
   // 2 missing
   f(0, 1, 2, 3, ee: 4, ff: 5)
   // expected-error@-1 {{missing argument labels 'cc:dd:' in call}} {{11-11=cc: }} {{14-14=dd: }} {{none}}
-
   // 2 extra
   f(aa: 0, bb: 1, cc: 2, dd: 3, ee: 4, ff: 5)
   // expected-error@-1 {{extraneous argument labels 'aa:bb:' in call}} {{5-9=}} {{12-16=}} {{none}}
-
   // 2 ooo
   f(0, 1, dd: 3, cc: 2, ff: 5, ee: 4)
   // expected-error@-1 {{argument 'cc' must precede argument 'dd'}} {{16-23=}} {{11-11=cc: 2, }} {{none}}
-
   // 1 wrong + 1 missing
   f(0, 1, ccx: 2, 3, ee: 4, ff: 5)
   // expected-error@-1 {{incorrect argument labels in call (have '_:_:ccx:_:ee:ff:', expected '_:_:cc:dd:ee:ff:')}} {{11-14=cc}} {{19-19=dd: }} {{none}}
-
   // 1 wrong + 1 extra
   f(aa: 0, 1, ccx: 2, dd: 3, ee: 4, ff: 5)
   // expected-error@-1 {{incorrect argument labels in call (have 'aa:_:ccx:dd:ee:ff:', expected '_:_:cc:dd:ee:ff:')}} {{5-9=}} {{15-18=cc}} {{none}}
-
   // 1 wrong + 1 ooo
   f(0, 1, ccx: 2, dd: 3, ff: 5, ee: 4)
   // expected-error@-1 {{incorrect argument labels in call (have '_:_:ccx:dd:ff:ee:', expected '_:_:cc:dd:ee:ff:')}} {{11-14=cc}} {{26-28=ee}} {{33-35=ff}} {{none}}
@@ -1245,7 +1711,37 @@ struct DiagnoseAllLabels {
 
   func test() {
     f(aax: 0, bbx: 1, cc: 21, 22, 23, dd: 3, ff: 5) // expected-error {{incorrect argument labels in call (have 'aax:bbx:cc:_:_:dd:ff:', expected 'aa:bb:cc:_:_:dd:ff:')}} {{7-10=aa}} {{15-18=bb}} {{none}}
-
     f(aax: 0, bbx: 1, dd: 3, ff: 5) // expected-error {{incorrect argument labels in call (have 'aax:bbx:dd:ff:', expected 'aa:bb:dd:ff:')}} {{7-10=aa}} {{15-18=bb}} {{none}}
   }
 }
+
+// SR-13135: Type inference regression in Swift 5.3 - can't infer a type of @autoclosure result.
+func sr13135() {
+  struct Foo {
+    var bar: [Int] = []
+  }
+
+  let baz: Int? = nil
+
+  func foo<T: Equatable>(
+    _ a: @autoclosure () throws -> T,
+    _ b: @autoclosure () throws -> T
+  ) {}
+
+  foo(Foo().bar, [baz])
+}
+
+// SR-13240
+func twoargs(_ x: String, _ y: String) {}
+
+func test() {
+  let x = 1
+  twoargs(x, x) // expected-error 2 {{cannot convert value of type 'Int' to expected argument type 'String'}}
+}
+
+infix operator ---
+
+func --- (_ lhs: String, _ rhs: String) -> Bool { true }
+
+let x = 1
+x --- x // expected-error 2 {{cannot convert value of type 'Int' to expected argument type 'String'}}
